@@ -1,0 +1,98 @@
+openenv: "0.1"
+
+metadata:
+  name: "Cloud FinOps & Security Simulator"
+  version: "1.0.0"
+  description: "An interactive OpenEnv simulation challenging autonomous agents to optimize cloud infrastructure costs and resolve critical IAM security leaks."
+  author: "Abhishek"
+  tags:
+    - cloud
+    - finops
+    - security
+    - aws
+    - iam
+
+environment:
+  entrypoint: "src/env.py"
+  class_name: "CloudFinOpsEnv"
+  tasks:
+    - id: 1
+      name: "Cost Optimization: Unattached EIP Cleanup"
+      difficulty: "easy"
+      description: "Detect and release orphaned Elastic IP allocations without accidentally disrupting active WebApp configurations."
+      max_steps: 20
+    - id: 2
+      name: "Cost Optimization: Rightsizing Production Database"
+      difficulty: "medium"
+      description: "Downsize the idle 'Database-Prod' EC2 instance from its expensive t3.xlarge format down to a t3.medium efficiently."
+      max_steps: 20
+    - id: 3
+      name: "Security Response: Compromised Identites & Rogue Workloads"
+      difficulty: "hard"
+      description: "Respond to a CRITICAL security alert. Deactivate exposed IAM keys for 'dev-john' and terminate heavily billed GPU rogue instances without touching 'Environment=production' assets."
+      max_steps: 20
+
+server:
+  framework: "FastAPI"
+  entrypoint: "main.py"
+  port: 7860
+  endpoints:
+    - path: "/"
+      method: "GET"
+      params: []
+      description: "HTTP 200 HTML dashboard displaying live stats and HF Space uptime hooks"
+    - path: "/reset"
+      method: "POST"
+      params:
+        - name: "task_id"
+          type: "query"
+          required: true
+      description: "Initializes/resets the environment for the specified task_id, returning the Observation JSON dict"
+    - path: "/state"
+      method: "GET"
+      params:
+        - name: "task_id"
+          type: "query"
+          required: true
+      description: "Returns the current state of the simulation as an Observation JSON object"
+    - path: "/step"
+      method: "POST"
+      params:
+        - name: "task_id"
+          type: "query"
+          required: true
+        - name: "action"
+          type: "body"
+          description: "Action model parsed automatically via JSON mapping to action_type schema"
+          required: true
+      description: "Receives a JSON Action matching valid types, applies it, and returns a StepResult JSON Payload"
+    - path: "/health"
+      method: "GET"
+      params: []
+      description: "Simple healthcheck yielding status: ok JSON payload"
+
+inference:
+  script_name: "inference.py"
+  env_variables:
+    - name: "API_BASE_URL"
+      description: "The targeted inference base URL for LLM processing"
+      default: ""
+    - name: "MODEL_NAME"
+      description: "LLM model string to run the agent inference through"
+      default: ""
+    - name: "HF_TOKEN"
+      description: "Hugging Face or generic API key for completing chat connections"
+      default: ""
+    - name: "ENV_BASE_URL"
+      description: "The root address for the running Cloud FinOps FastAPI server endpoint"
+      default: "http://localhost:7860"
+
+grading:
+  type: "float"
+  range: [0.0, 1.0]
+  partial_credit: true
+  notes: |
+    Grading algorithms implement partial credit thresholds based on action severity constraints per step:
+    - Task 1: 0.33 awarded per correctly released orphaned EIP. Applies a flat -0.3 penalty off total if 'eip-004' (production instance IP) is stripped.
+    - Task 2: 1.0 full credit if the 'Database-Prod' target is perfectly sized to 't3.medium'. 0.5 static partial credit if a mismatched downsize event occurred.
+    - Task 3: 0.5 total pool for deleting the 2 rogue instances (+0.25 per ID). 0.5 flat for revoking access keys over dev-john. Immediate -0.5 hit globally if a production instance is accidentally terminated natively.
