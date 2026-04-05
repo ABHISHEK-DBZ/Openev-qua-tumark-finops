@@ -1,0 +1,7 @@
+.venv
+submission_venv
+__pycache__
+*.log
+.vscode
+.git
+.pytest_cache
