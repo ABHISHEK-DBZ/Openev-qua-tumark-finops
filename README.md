@@ -1,3 +1,14 @@
+---
+title: OpenEnv QuantumArk FinOps
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+tags:
+- openenv
+---
+
 # Cloud FinOps & Security Simulator
 
 An interactive OpenEnv simulation challenging autonomous agents to optimize cloud infrastructure costs and resolve critical IAM security leaks.
