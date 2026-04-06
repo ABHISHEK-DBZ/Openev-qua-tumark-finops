@@ -78,21 +78,21 @@ async def dashboard():
     return html_content
 
 @app.post("/reset", response_model=Observation)
-async def reset_env(task_id: int):
+async def reset_env(task_id: int = 1):
     """Resets the environment for a specific task_id and returns the observation."""
     if task_id not in envs_dict:
         envs_dict[task_id] = CloudFinOpsEnv(task_id=task_id)
     return envs_dict[task_id].reset()
 
 @app.get("/state", response_model=Observation)
-async def get_state(task_id: int):
+async def get_state(task_id: int = 1):
     """Gets the current environment state for a specific task_id."""
     if task_id not in envs_dict:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not initialized")
     return envs_dict[task_id].state()
 
 @app.post("/step", response_model=StepResult)
-async def step_env(task_id: int, request: Request):
+async def step_env(request: Request, task_id: int = 1):
     """Applies an action and advances the environment by one step for a given task_id."""
     if task_id not in envs_dict:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not initialized")
