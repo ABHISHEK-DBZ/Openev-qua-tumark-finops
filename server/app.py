@@ -124,6 +124,10 @@ async def step_env(request: Request, task_id: int = 1):
         
     return envs_dict[task_id].step(action)
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the server."""
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
