@@ -322,4 +322,4 @@ MIT License — See LICENSE file for details.
 
 ---
 
-**Made with ❤️ by [@ABHISHEK-DBZ](https://github.com/ABHISHEK-DBZ)**
+**Made with ❤️ by [@ABHISHEK-DBZ](https://github.com/ABHISHEK-DBZ) [@Paritosh2681](https://github.com/Paritosh2681)**
