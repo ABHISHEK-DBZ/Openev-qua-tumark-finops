@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloud-finops-security-simulator"
+version = "1.0.0"
+description = "An interactive OpenEnv simulation for autonomous agents to optimize cloud infrastructure costs and resolve critical security incidents."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Abhishek Jha", email = "abhibro936@gmail.com"}
+]
+keywords = [
+    "openenv",
+    "reinforcement-learning",
+    "cloud-optimization",
+    "finops",
+    "security",
+    "autonomous-agents"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi==0.110.0",
+    "uvicorn[standard]==0.29.0",
+    "pydantic==2.6.4",
+    "openai==1.14.2",
+    "requests==2.31.0",
+    "python-multipart==0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://huggingface.co/spaces/abhibro936/openenv-quantumark-finops"
+Repository = "https://github.com/ABHISHEK-DBZ/Openev-qua-tumark-finops"
+"Bug Tracker" = "https://github.com/ABHISHEK-DBZ/Openev-qua-tumark-finops/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
