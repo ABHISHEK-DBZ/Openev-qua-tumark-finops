@@ -25,7 +25,11 @@ ENV_BASE_URL = ENV_BASE_URL.rstrip('/')
 API_BASE_URL = API_BASE_URL.rstrip('/')
 
 # Initialize OpenAI Client
-client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+try:
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+except Exception as e:
+    print(f"Error: Failed to initialize OpenAI client: {e}", file=sys.stderr)
+    sys.exit(1)
 
 START_TIME = time.time()
 MAX_ELAPSED_SECONDS = 1100
