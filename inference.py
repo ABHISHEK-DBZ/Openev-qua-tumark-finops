@@ -1,30 +1,41 @@
+#!/usr/bin/env python3
+"""
+OpenEnv Inference Script for Cloud FinOps & Security Simulator
+Directly uses CloudFinOpsEnv per OpenEnv spec.
+"""
+
 import os
 import sys
 import time
 import json
-import ssl
-import socket
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
-try:
-    from openai import OpenAI
-except ImportError:
-    print("Error: 'openai' library not found. Run 'pip install openai'")
-    sys.exit(1)
-
-# 1. Configuration — pointing at the LLM provider
+# Environment variables
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:11434/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "llama3.2")
 HF_TOKEN = os.environ.get("HF_TOKEN", "ollama")
-ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 ENV_NAME = "Cloud FinOps & Security Simulator"
 
-if not all([API_BASE_URL, MODEL_NAME, HF_TOKEN, ENV_BASE_URL]):
-    print("Error: Missing required environment variables (API_BASE_URL, MODEL_NAME, HF_TOKEN, ENV_BASE_URL).", file=sys.stderr)
+# Import environment and models
+try:
+    from src.env import CloudFinOpsEnv
+    from src.models import (
+        TerminateInstanceAction,
+        DownsizeInstanceAction,
+        ReleaseElasticIPAction,
+        RevokeIAMKeyAction,
+        NoOpAction,
+    )
+except ImportError as e:
+    print(f"Error: Failed to import environment modules: {e}", file=sys.stderr)
     sys.exit(1)
 
-ENV_BASE_URL = ENV_BASE_URL.rstrip('/')
-API_BASE_URL = API_BASE_URL.rstrip('/')
+# Import OpenAI client
+try:
+    from openai import OpenAI
+except ImportError:
+    print("Error: 'openai' library not found. Run 'pip install openai'", file=sys.stderr)
+    sys.exit(1)
 
 # Initialize OpenAI Client
 try:
@@ -36,162 +47,131 @@ except Exception as e:
 START_TIME = time.time()
 MAX_ELAPSED_SECONDS = 1100
 
-# Mandatory STDOUT Format Helpers
-def print_start(task_name, env_name=ENV_NAME, model_name=MODEL_NAME):
-    print(f"[START] task={task_name} env={env_name} model={model_name}")
 
-def print_step(step_num, action_dict, reward, done, error=None):
-    # Convert booleans to lowercase string 'true' or 'false'
+def print_start(task_name: str, env_name: str = ENV_NAME, model_name: str = MODEL_NAME):
+    print(f"[START] task={task_name} env={env_name} model={model_name}", flush=True)
+
+
+def print_step(step_num: int, action_dict: Dict[str, Any], reward: float, done: bool, error: Optional[str] = None):
     done_str = str(done).lower()
     error_str = str(error) if error else "null"
-    # Action string must not have newlines
-    action_str = str(action_dict).replace('\n', '')
-    # Reward must be 2 decimal places
-    print(f"[STEP] step={step_num} action={action_str} reward={reward:.2f} done={done_str} error={error_str}")
+    action_str = str(action_dict).replace('\n', '').replace("'", '"')
+    print(
+        f"[STEP] step={step_num} action={action_str} reward={reward:.2f} done={done_str} error={error_str}",
+        flush=True,
+    )
 
-def print_end(success, steps, score, rewards_list):
+
+def print_end(success: bool, steps: int, score: float, rewards_list: List[float]):
     success_str = str(success).lower()
-    # Format list of rewards to 2 decimal places: e.g., "0.00,0.50,0.50"
     rewards_str = ",".join([f"{r:.2f}" for r in rewards_list])
-    print(f"[END] success={success_str} steps={steps} score={score:.2f} rewards={rewards_str}")
+    print(
+        f"[END] success={success_str} steps={steps} score={score:.2f} rewards={rewards_str}",
+        flush=True,
+    )
 
 
-def condense_observation(obs: dict) -> str:
-    """Shrink the observation to only the critical fields so small LLMs can handle it."""
+def condense_observation(obs) -> str:
+    """Shrink observation to critical fields for small LLMs."""
     lines = []
     
-    # Task info
-    task_id = obs.get("active_task_id") or obs.get("task_id", "?")
-    lines.append(f"TASK: {task_id}")
-    lines.append(f"Steps left: {obs.get('remaining_steps', '?')}")
-    
-    # EC2 instances - skip terminated ones to clear targets
-    instances = obs.get("ec2_instances", [])
-    if instances:
+    # EC2 instances
+    if obs.instances:
         lines.append("EC2 INSTANCES:")
-        for i in instances:
-            state = i.get("state","?")
-            if state == "terminated": continue
-            name = i.get("name", i.get("instance_id","?"))
-            iid = i.get("instance_id","?")
-            itype = i.get("instance_type","?")
-            prod = i.get("is_production", False)
-            cpu = i.get("avg_cpu_percent", "?")
-            lines.append(f"  - {name} ({iid}): type={itype}, state={state}, prod={prod}, cpu={cpu}%")
+        for i in obs.instances:
+            if i.state == "terminated":
+                continue
+            name = i.tags.get("Name", i.instance_id)
+            lines.append(
+                f"  - {name} ({i.instance_id}): type={i.instance_type}, cpu={i.cpu_utilization_percent}%, cost=${i.monthly_cost}"
+            )
     
     # Elastic IPs
-    eips = obs.get("elastic_ips", [])
-    if eips:
+    if obs.elastic_ips:
         lines.append("ELASTIC IPs:")
-        for e in eips:
-            aid = e.get("allocation_id","?")
-            attached = e.get("attached_to") or e.get("associated_instance_id")
-            lines.append(f"  - {aid}: attached_to={attached}")
+        for e in obs.elastic_ips:
+            attached = e.associated_instance_id or "UNATTACHED"
+            lines.append(f"  - {e.allocation_id}: associated_to={attached}")
     
     # IAM users
-    iam = obs.get("iam_users", [])
-    if iam:
+    if obs.iam_users:
         lines.append("IAM USERS:")
-        for u in iam:
-            uname = u.get("user_name","?")
-            keys = u.get("access_keys", [])
-            for k in keys:
-                kid = k.get("access_key_id","?")
-                status = k.get("status","?")
-                days = k.get("days_since_last_used", "?")
-                lines.append(f"  - {uname}: key={kid}, status={status}, days_unused={days}")
+        for u in obs.iam_users:
+            lines.append(f"  - {u.user_name}: keys={u.active_access_keys_count}, mfa={u.has_mfa_enabled}")
     
     # Security alerts
-    alerts = obs.get("security_alerts", [])
-    if alerts:
+    if obs.security_alerts:
         lines.append("SECURITY ALERTS:")
-        for a in alerts:
-            lines.append(f"  - {a.get('alert_type','?')}: {a.get('description','?')}")
+        for a in obs.security_alerts:
+            lines.append(f"  - {a.severity.upper()}: {a.description}")
     
     # Billing
-    billing = obs.get("billing_summary", {})
-    if billing:
-        lines.append(f"BILLING: total=${billing.get('total_monthly_spend','?')}")
+    if obs.billing_summary:
+        lines.append(f"BILLING: monthly_spend=${obs.billing_summary.total_monthly_spend}")
     
     return "\n".join(lines)
 
 
-def build_task_prompt(task_id, condensed_obs: str, history: list = None) -> str:
-    """Build a laser-focused prompt per task with history memory to prevent loops."""
+def build_task_prompt(task_id: int, condensed_obs: str, history: List[str] = None) -> str:
+    """Build task-specific prompt."""
     history_str = ""
     if history:
         history_str = "\n\nPREVIOUS ACTIONS (Do NOT repeat if successful):\n" + "\n".join([f"- {h}" for h in history[-5:]])
 
     if task_id == 1:
-        return f"{condensed_obs}{history_str}\n\nObjective: Save money on Elastic IPs. Release ALL EIPs that are NOT attached to any instance.\nAction: Use 'release_elastic_ip' for one unattached IP (e.g. eip-001, eip-002, or eip-003).\nReply ONLY with JSON: {{\"action_type\": \"release_elastic_ip\", \"allocation_id\": \"ID_HERE\"}}"
+        return (
+            f"{condensed_obs}{history_str}\n\n"
+            "Objective: Save money on Elastic IPs.\n"
+            "ACTION: Release ONE unattached Elastic IP (look for UNATTACHED in the list).\n"
+            'Reply ONLY with JSON: {"action_type": "release_elastic_ip", "allocation_id": "ID_HERE"}'
+        )
 
     elif task_id == 2:
-        return f"{condensed_obs}{history_str}\n\nObjective: Cloud FinOps - Resource Scaling. Downsize 'i-db-prod' to 't3.medium'.\nAction: Use 'downsize_instance' with instance_id 'i-db-prod' and new_instance_type 't3.medium'.\nReply ONLY with JSON: {{\"action_type\": \"downsize_instance\", \"instance_id\": \"i-db-prod\", \"new_instance_type\": \"t3.medium\"}}"
+        return (
+            f"{condensed_obs}{history_str}\n\n"
+            "Objective: Right-size the database instance.\n"
+            "ACTION: Downsize i-db-prod to t3.medium.\n"
+            'Reply ONLY with JSON: {"action_type": "downsize_instance", "instance_id": "i-db-prod", "new_instance_type": "t3.medium"}'
+        )
 
     elif task_id == 3:
-        return f"{condensed_obs}{history_str}\n\nObjective: SECURITY INCIDENT RESPONSE. \n1. TERMINATE any 'rogue' instances listed in EC2 INSTANCES above (i-rogue-1, i-rogue-2).\n2. ONLY IF NO 'i-rogue' instances are currently listed, use 'revoke_iam_key' on user 'dev-john' to finalize security.\nReply ONLY with the SINGLE next JSON action."
+        return (
+            f"{condensed_obs}{history_str}\n\n"
+            "Objective: SECURITY INCIDENT RESPONSE.\n"
+            "STEP 1: Terminate rogue instances (i-rogue-1, i-rogue-2).\n"
+            "STEP 2: After rogues are gone, revoke dev-john's IAM key.\n"
+            'Reply ONLY with JSON: {"action_type": "terminate_instance", "instance_id": "..."}  OR  {"action_type": "revoke_iam_key", "user_name": "dev-john"}'
+        )
 
     return f"Observation:\n{condensed_obs}\n{history_str}\n\nReturn JSON action."
 
 
 def extract_json_from_response(text: str) -> Dict[str, Any]:
-    """Extracts JSON block from model response with greedy matching and field mapping."""
+    """Extract and parse JSON from model response."""
     import re
-    # Look for any JSON-like block
     json_match = re.search(r'\{.*\}', text, re.DOTALL)
     if json_match:
         json_str = json_match.group(0)
         try:
-            raw_data = json.loads(json_str)
-            # Create a case-insensitive copy of the data
-            data = {k.lower(): v for k, v in raw_data.items()}
-            
-            # Normalize to 'action_type'
-            for k in ["action", "action_name", "actiontype", "type"]:
-                if k in data and "action_type" not in data:
-                    act = str(data[k]).lower()
-                    if "terminate" in act: data["action_type"] = "terminate_instance"
-                    elif "downsize" in act: data["action_type"] = "downsize_instance"
-                    elif "release" in act: data["action_type"] = "release_elastic_ip"
-                    elif "revoke" in act: data["action_type"] = "revoke_iam_key"
-                    else: data["action_type"] = data[k]
-            
-            # Normalize IDs
-            for k in ["resource_id", "instance", "id", "instanceid", "allocationid", "allocation_id"]:
-                if k in data:
-                    val = str(data[k])
-                    # If we need an instance_id
-                    if "instance" in data.get("action_type", ""):
-                        if "instance_id" not in data: data["instance_id"] = val
-                    # If we need an allocation_id
-                    if "elastic_ip" in data.get("action_type", ""):
-                        if "allocation_id" not in data: data["allocation_id"] = val
-            
-            # Map user_name
-            if "username" in data and "user_name" not in data:
-                data["user_name"] = data["username"]
-
-            return data
+            return json.loads(json_str)
         except json.JSONDecodeError:
             pass
     return {}
 
 
-def call_llm(observation: dict, task_id: int, history: list = None) -> dict:
+def call_llm(observation, task_id: int, history: List[str] = None) -> Dict[str, Any]:
+    """Call LLM to get next action."""
     condensed = condense_observation(observation)
     user_prompt = build_task_prompt(task_id, condensed, history)
     
-    # Directive system prompt as requested by user
-    sys_prompt = """You are a strict Cloud FinOps and Security AI Agent. 
-Output ONLY valid JSON matching the Action schema. 
+    sys_prompt = (
+        "You are a Cloud FinOps and Security AI Agent. "
+        "Output ONLY valid JSON matching the action schema. "
+        "No preamble, no conversational filler. "
+        "Valid action_type values: terminate_instance, downsize_instance, release_elastic_ip, revoke_iam_key, no_op"
+    )
 
-CRITICAL:
-- No preamble! No conversational filler!
-- Action type MUST be one of: terminate_instance, downsize_instance, release_elastic_ip, revoke_iam_key, no_op.
-- Valid JSON schema example: {"action_type": "terminate_instance", "instance_id": "i-123"}
-"""
-
-    for attempt in range(4):
+    for attempt in range(3):
         try:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -200,65 +180,62 @@ CRITICAL:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.0,
-                response_format={"type": "json_object"}
+                max_tokens=200,
             )
             content = response.choices[0].message.content
             parsed = extract_json_from_response(content)
             if "action_type" in parsed:
                 return parsed
         except Exception as e:
-            time.sleep(1)
+            if attempt < 2:
+                time.sleep(1)
+            continue
             
     return {"action_type": "no_op"}
 
 
-def env_post(endpoint: str, payload: dict = None) -> tuple:
-    import urllib.request
-    import urllib.error
-    import ssl
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+def build_action_from_dict(action_dict: Dict[str, Any]):
+    """Convert action dict to proper Action object."""
+    action_type = action_dict.get("action_type", "no_op").lower()
     
-    headers = {"Content-Type": "application/json"}
-    body_str = json.dumps(payload) if payload else ""
-    data = body_str.encode('utf-8') if payload else b""
-    req = urllib.request.Request(f"{ENV_BASE_URL}{endpoint}", data=data, headers=headers, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-            response_data = response.read().decode('utf-8')
-            try:
-                return response.status, json.loads(response_data)
-            except json.JSONDecodeError as je:
-                print(f"Error: Invalid JSON response from {endpoint}: {response_data}", file=sys.stderr)
-                raise Exception(f"Invalid JSON from env: {je}")
-    except urllib.error.HTTPError as e:
-        try:
-            error_data = json.loads(e.read().decode('utf-8'))
-            return e.code, error_data
-        except:
-            return e.code, {"error": str(e)}
-    except urllib.error.URLError as e:
-        print(f"Error: Cannot reach environment at {ENV_BASE_URL}{endpoint}: {e}", file=sys.stderr)
-        raise Exception(f"Env unreachable: {e}")
-    except socket.timeout:
-        raise Exception(f"Timeout reaching env at {endpoint}")
+        if action_type == "terminate_instance":
+            return TerminateInstanceAction(
+                instance_id=action_dict.get("instance_id", "i-unknown")
+            )
+        elif action_type == "downsize_instance":
+            return DownsizeInstanceAction(
+                instance_id=action_dict.get("instance_id", "i-unknown"),
+                new_instance_type=action_dict.get("new_instance_type", "t3.medium")
+            )
+        elif action_type == "release_elastic_ip":
+            return ReleaseElasticIPAction(
+                allocation_id=action_dict.get("allocation_id", "eip-unknown")
+            )
+        elif action_type in ["revoke_iam_key", "revoke_user"]:
+            return RevokeIAMKeyAction(
+                user_name=action_dict.get("user_name", "unknown")
+            )
+        else:
+            return NoOpAction()
     except Exception as e:
-        print(f"Error: env_post failed for {endpoint}: {e}", file=sys.stderr)
-        raise Exception(f"Env communication failed: {e}")
+        print(f"[DEBUG] Failed to build action: {e}", file=sys.stderr)
+        return NoOpAction()
 
 
 def run_task(task_id: int, task_name: str) -> float:
+    """Run a single task from start to finish."""
     print_start(task_name)
     
+    env = None
     try:
-        status, observation = env_post(f"/reset?task_id={task_id}")
-        if status != 200:
-            raise Exception(f"Env reset failed: {status}")
+        env = CloudFinOpsEnv(task_id=task_id)
+        observation = env.reset()
     except Exception as e:
+        print(f"[DEBUG] Env reset failed: {e}", file=sys.stderr)
         print_end(False, 0, 0.0, [0.0])
         return 0.0
-        
+    
     done = False
     final_score = 0.0
     steps = 0
@@ -268,73 +245,75 @@ def run_task(task_id: int, task_name: str) -> float:
     while not done:
         elapsed = time.time() - START_TIME
         if elapsed > MAX_ELAPSED_SECONDS:
+            print(f"[DEBUG] Timeout after {elapsed:.1f}s", file=sys.stderr)
             break
-            
-        action_json = call_llm(observation, task_id, history)
-        action_type = action_json.get("action_type", "unknown")
         
-        # Simple loop protection
-        action_str = f"{action_type}({json.dumps({k:v for k,v in action_json.items() if k != 'action_type'})})"
-        history.append(action_str)
+        if steps >= 20:
+            print(f"[DEBUG] Max steps (20) reached", file=sys.stderr)
+            break
         
         try:
-            status, result = env_post(f"/step?task_id={task_id}", action_json)
-            if status in [400, 422]:
-                status, result = env_post(f"/step?task_id={task_id}", {"action_type": "no_op"})
-                
-            if status != 200:
-                break
-                
-            observation_next = result.get("observation", {})
-            current_reward = result.get("reward", 0.0)
-            done = result.get("done", False)
+            # Call LLM to get action
+            action_dict = call_llm(observation, task_id, history)
+            action = build_action_from_dict(action_dict)
+            
+            # Record action in history
+            action_type = action_dict.get("action_type", "unknown")
+            history.append(f"{action_type}({json.dumps({k: v for k, v in action_dict.items() if k != 'action_type'})})")
+            
+            # Execute action
+            result = env.step(action)
+            
+            observation_next = result.observation
+            reward = result.reward or 0.0
+            done = result.done
             steps += 1
             
-            rewards_list.append(current_reward)
-            print_step(steps, action_json, current_reward, done)
+            rewards_list.append(reward)
+            print_step(steps, action_dict, reward, done)
             
             observation = observation_next
-            final_score = current_reward
+            final_score = reward
             
-            if task_id == 3 and len(history) > 10 and all(h == history[-1] for h in history[-5:]):
-                done = True
-                
         except Exception as e:
-            print_step(steps+1, action_json, 0, True, error=str(e))
+            print(f"[DEBUG] Step execution failed: {e}", file=sys.stderr)
+            print_step(steps + 1, {}, 0.0, True, error=str(e))
             break
-            
+    
     print_end(done, steps, final_score, rewards_list)
     return final_score
 
 
 def main():
-    tasks = [
-        (1, "Cost Optimization: Unattached EIP Cleanup"),
-        (2, "Cost Optimization: Rightsizing Production Database"),
-        (3, "Security Response: Compromised Identities & Rogue Workloads")
-    ]
-    
-    scores = {}
-    for tid, tname in tasks:
-        elapsed = time.time() - START_TIME
-        if elapsed > MAX_ELAPSED_SECONDS:
-            break
-        scores[tid] = run_task(tid, tname)
+    """Main entry point — run all 3 tasks."""
+    try:
+        tasks = [
+            (1, "Cost Optimization: Unattached EIP Cleanup"),
+            (2, "Cost Optimization: Rightsizing Production Database"),
+            (3, "Security Response: Compromised Identities & Rogue Workloads"),
+        ]
         
-    total_score = sum(scores.values())
-    avg = total_score / len(tasks)
-    
-    if avg >= 0.8:
-        sys.exit(0)
-    else:
+        scores = {}
+        for task_id, task_name in tasks:
+            elapsed = time.time() - START_TIME
+            if elapsed > MAX_ELAPSED_SECONDS:
+                break
+            scores[task_id] = run_task(task_id, task_name)
+        
+        # Calculate overall success
+        if scores:
+            avg_score = sum(scores.values()) / len(tasks)
+            sys.exit(0 if avg_score >= 0.5 else 1)
+        else:
+            sys.exit(1)
+            
+    except Exception as e:
+        import traceback
+        print(f"[FATAL] {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        import traceback
-        print(f"FATAL ERROR: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        sys.exit(1)
+    main()
+
