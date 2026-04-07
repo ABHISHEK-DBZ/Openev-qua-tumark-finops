@@ -11,10 +11,15 @@ import json
 from typing import Dict, Any, List, Optional
 
 # Environment variables
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:11434/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "llama3.2")
-HF_TOKEN = os.environ.get("HF_TOKEN", "ollama")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api-inference.huggingface.co/v1")
+MODEL_NAME = os.environ.get("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.3")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 ENV_NAME = "Cloud FinOps & Security Simulator"
+
+# Validate HF_TOKEN is provided
+if not HF_TOKEN:
+    print("Error: HF_TOKEN environment variable is required", file=sys.stderr)
+    sys.exit(1)
 
 # Import environment and models
 try:
