@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import ssl
+import socket
 from typing import Dict, Any
 
 try:
@@ -19,7 +20,8 @@ ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 ENV_NAME = "Cloud FinOps & Security Simulator"
 
 if not all([API_BASE_URL, MODEL_NAME, HF_TOKEN, ENV_BASE_URL]):
-    print("Error: Missing required environment variables (API_BASE_URL, MODEL_NAME, HF_TOKEN, ENV_BASE_URL).")
+    print("Error: Missing required environment variables (API_BASE_URL, MODEL_NAME, HF_TOKEN, ENV_BASE_URL).", file=sys.stderr)
+    sys.exit(1)
 
 ENV_BASE_URL = ENV_BASE_URL.rstrip('/')
 API_BASE_URL = API_BASE_URL.rstrip('/')
@@ -219,15 +221,30 @@ def env_post(endpoint: str, payload: dict = None) -> tuple:
     ctx.verify_mode = ssl.CERT_NONE
     
     headers = {"Content-Type": "application/json"}
-    body_str = json.dumps(payload)
+    body_str = json.dumps(payload) if payload else ""
     data = body_str.encode('utf-8') if payload else b""
     req = urllib.request.Request(f"{ENV_BASE_URL}{endpoint}", data=data, headers=headers, method='POST')
     try:
         with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-            return response.status, json.loads(response.read().decode('utf-8'))
+            response_data = response.read().decode('utf-8')
+            try:
+                return response.status, json.loads(response_data)
+            except json.JSONDecodeError as je:
+                print(f"Error: Invalid JSON response from {endpoint}: {response_data}", file=sys.stderr)
+                raise Exception(f"Invalid JSON from env: {je}")
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode('utf-8'))
+        try:
+            error_data = json.loads(e.read().decode('utf-8'))
+            return e.code, error_data
+        except:
+            return e.code, {"error": str(e)}
+    except urllib.error.URLError as e:
+        print(f"Error: Cannot reach environment at {ENV_BASE_URL}{endpoint}: {e}", file=sys.stderr)
+        raise Exception(f"Env unreachable: {e}")
+    except socket.timeout:
+        raise Exception(f"Timeout reaching env at {endpoint}")
     except Exception as e:
+        print(f"Error: env_post failed for {endpoint}: {e}", file=sys.stderr)
         raise Exception(f"Env communication failed: {e}")
 
 
@@ -314,4 +331,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print(f"FATAL ERROR: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
